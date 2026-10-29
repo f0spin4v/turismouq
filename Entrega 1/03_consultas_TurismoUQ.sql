@@ -1,9 +1,12 @@
 -- TurismoUQ - Bases de Datos II (2026-2), grupo 01N
--- Equipo: Andrés Ospina Vera, <integrante 2>, <integrante 3>
+-- Equipo: Andrés Ospina Vera, Juan Esteban Cuervo Jimenez
 -- Script 3: consultas de análisis (Oracle XE 21c)
--- Correr después de 01_ddl.sql y 02_carga.sql, completo con F5.
+-- Orden de ejecución: 01_DDL_TurismoUQ.sql, 02_carga de datos.sql, 03_consultas_TurismoUQ.sql
+-- Correr después de los scripts 1 y 2, completo con F5.
 --
--- Ingreso de una reserva = habitaciones + servicios. Solo reservas COMPLETADAS.
+-- Ingreso de una reserva = valor guardado de sus habitaciones (valor_estadia)
+-- + sus servicios. Solo reservas COMPLETADAS. Es el mismo criterio en todas las
+-- consultas de ingresos (2 a 6), así las cifras cuadran entre ellas.
 -- Ocupación = noches vendidas / noches disponibles (reservas CONFIRMADAS y COMPLETADAS).
 -- Las estadías se reparten noche por noche con la tabla CALENDARIO.
 
@@ -21,6 +24,10 @@ COLUMN concepto               FORMAT A10
 COLUMN diagnostico            FORMAT A14
 COLUMN ingresos               FORMAT 999,999,999,999
 COLUMN ingresos_estadia       FORMAT 999,999,999,999
+COLUMN ingresos_servicios     FORMAT 999,999,999,999
+COLUMN total_por_lineas       FORMAT 999,999,999,999
+COLUMN total_por_noches       FORMAT 999,999,999,999
+COLUMN diferencia             FORMAT 999,999,999,999
 COLUMN ingresos_mes_anterior  FORMAT 999,999,999,999
 COLUMN variacion              FORMAT 999,999,999,999
 COLUMN valor                  FORMAT 999,999,999,999
@@ -74,11 +81,44 @@ ORDER BY municipio;
 
 
 -- Consulta 2 (ROLLUP con GROUPING)
--- Ingresos por estadía por municipio, tipo de alojamiento y temporada,
--- con subtotales y total general.
--- Cada noche se cruza con CALENDARIO y TARIFA para saber su temporada y su valor.
+-- Ingresos por municipio, tipo de alojamiento y temporada, con subtotales
+-- y total general. Usa el mismo criterio que las otras consultas: el valor
+-- guardado de la estadía (valor_estadia) más los servicios.
+-- Para saber a qué temporada va cada peso, el valor de la estadía se reparte
+-- entre sus noches en proporción a la tarifa de cada noche. Así una estadía
+-- que cruza de media a alta reparte su valor entre las dos temporadas.
+-- Los servicios se cuentan en la temporada de la noche de llegada.
 -- GROUPING vale 1 en las filas de subtotal; se usa para ponerles nombre.
 -- NIVEL: 0 detalle, 1 subtotal de tipo, 3 subtotal de municipio, 7 total.
+WITH noches AS (
+  -- Una fila por noche, con su parte del valor guardado de la estadía
+  SELECT r.id_alojamiento,
+         c.id_temporada,
+         l.valor_estadia * t.valor_noche
+           / SUM(t.valor_noche) OVER (PARTITION BY l.id_reserva_hab) AS estadia
+  FROM   reserva_habitacion l
+  JOIN   reserva r     ON r.id_reserva = l.id_reserva
+  JOIN   calendario c  ON c.fecha >= l.fecha_checkin
+                      AND c.fecha <  l.fecha_checkout
+  JOIN   tarifa t      ON t.id_habitacion = l.id_habitacion
+                      AND t.id_temporada  = c.id_temporada
+  WHERE  r.estado = 'COMPLETADA'
+),
+servicios AS (
+  -- Los servicios de cada reserva, en la temporada de su noche de llegada
+  SELECT r.id_alojamiento,
+         c.id_temporada,
+         rs.cantidad * rs.precio_unitario AS servicios
+  FROM   reserva r
+  JOIN   reserva_servicio rs ON rs.id_reserva = r.id_reserva
+  JOIN   calendario c        ON c.fecha = r.fecha_checkin
+  WHERE  r.estado = 'COMPLETADA'
+),
+ingresos AS (
+  SELECT id_alojamiento, id_temporada, 1 AS noche, estadia, 0 AS servicios FROM noches
+  UNION ALL
+  SELECT id_alojamiento, id_temporada, 0, 0, servicios FROM servicios
+)
 SELECT CASE WHEN GROUPING(m.nombre) = 1 THEN 'TOTAL GENERAL'
             ELSE m.nombre END                               AS municipio,
        CASE WHEN GROUPING(m.nombre)  = 1 THEN '-'
@@ -87,20 +127,16 @@ SELECT CASE WHEN GROUPING(m.nombre) = 1 THEN 'TOTAL GENERAL'
        CASE WHEN GROUPING(ta.nombre)    = 1 THEN '-'
             WHEN GROUPING(te.categoria) = 1 THEN 'Subtotal tipo'
             ELSE te.categoria END                           AS temporada,
-       COUNT(*)                                             AS noches_vendidas,
-       SUM(t.valor_noche)                                   AS ingresos_estadia,
+       SUM(i.noche)                                         AS noches_vendidas,
+       ROUND(SUM(i.estadia))                                AS ingresos_estadia,
+       ROUND(SUM(i.servicios))                              AS ingresos_servicios,
+       ROUND(SUM(i.estadia + i.servicios))                  AS ingresos,
        GROUPING_ID(m.nombre, ta.nombre, te.categoria)       AS nivel
-FROM   reserva_habitacion l
-JOIN   reserva r           ON r.id_reserva = l.id_reserva
-JOIN   alojamiento a       ON a.id_alojamiento = r.id_alojamiento
+FROM   ingresos i
+JOIN   alojamiento a       ON a.id_alojamiento = i.id_alojamiento
 JOIN   municipio m         ON m.id_municipio = a.id_municipio
 JOIN   tipo_alojamiento ta ON ta.id_tipo = a.id_tipo
-JOIN   calendario c        ON c.fecha >= l.fecha_checkin
-                          AND c.fecha <  l.fecha_checkout
-JOIN   temporada te        ON te.id_temporada = c.id_temporada
-JOIN   tarifa t            ON t.id_habitacion = l.id_habitacion
-                          AND t.id_temporada  = c.id_temporada
-WHERE  r.estado = 'COMPLETADA'
+JOIN   temporada te        ON te.id_temporada = i.id_temporada
 GROUP BY ROLLUP (m.nombre, ta.nombre, te.categoria)
 ORDER BY GROUPING(m.nombre), m.nombre,
          GROUPING(ta.nombre), ta.nombre,
@@ -286,3 +322,37 @@ JOIN   municipio m         ON m.id_municipio = a.id_municipio
 GROUP BY a.id_alojamiento, a.nombre_comercial, a.estrellas, ta.nombre, m.nombre
 HAVING COUNT(*) >= 30
 ORDER BY puesto, resenas DESC;
+
+
+-- Control: el total de ingresos cuadra entre consultas
+-- TOTAL_POR_LINEAS suma valor_estadia + servicios, como las consultas 3, 4 y 6.
+-- TOTAL_POR_NOCHES suma el reparto noche por noche, como la consulta 2.
+-- La diferencia debe dar 0.
+WITH lineas AS (
+  SELECT SUM(l.valor_estadia) AS v
+  FROM   reserva_habitacion l JOIN reserva r ON r.id_reserva = l.id_reserva
+  WHERE  r.estado = 'COMPLETADA'
+),
+serv AS (
+  SELECT SUM(rs.cantidad * rs.precio_unitario) AS v
+  FROM   reserva_servicio rs JOIN reserva r ON r.id_reserva = rs.id_reserva
+  WHERE  r.estado = 'COMPLETADA'
+),
+noches AS (
+  -- El reparto por noche va en una subconsulta: Oracle no deja meter una
+  -- función de ventana dentro de un SUM en el mismo nivel
+  SELECT SUM(parte) AS v
+  FROM (
+    SELECT l.valor_estadia * t.valor_noche
+             / SUM(t.valor_noche) OVER (PARTITION BY l.id_reserva_hab) AS parte
+    FROM   reserva_habitacion l
+    JOIN   reserva r    ON r.id_reserva = l.id_reserva
+    JOIN   calendario c ON c.fecha >= l.fecha_checkin AND c.fecha < l.fecha_checkout
+    JOIN   tarifa t     ON t.id_habitacion = l.id_habitacion AND t.id_temporada = c.id_temporada
+    WHERE  r.estado = 'COMPLETADA'
+  )
+)
+SELECT lineas.v + serv.v                           AS total_por_lineas,
+       ROUND(noches.v) + serv.v                    AS total_por_noches,
+       lineas.v + serv.v - (ROUND(noches.v) + serv.v) AS diferencia
+FROM   lineas, serv, noches;

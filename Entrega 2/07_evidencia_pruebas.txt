@@ -1,0 +1,260 @@
+TurismoUQ - Bases de Datos II (2026-2), grupo 01N
+Equipo: Andrés Ospina Vera, Juan Esteban Cuervo Jimenez
+Evidencia de pruebas - Entrega 2
+Salida de la ejecución de 07_pruebas_TurismoUQ.sql en SQL Developer
+Usuario: TURISMOUQ - Oracle XE 21c (XEPDB1) - Ejecutado el 26/10/2026 11:50
+Base: scripts 01 a 03 de la Entrega 1 y 04 a 06 de la Entrega 2
+
+Contenido:
+  Prueba 1  fn_valor_estadia (noche por noche, cruce de temporadas y de año, errores)
+  Prueba 2  sp_crear_reserva (reserva válida y errores -20001, -20002, -20003)
+  Prueba 3  disparador de fila trg_reshab_solape (error -20010)
+  Prueba 4  disparador de auditoría trg_tarifa_auditoria
+  Prueba 5  cursor de liquidación sp_liquidacion_mensual
+  Prueba 6  tablespace TS_TURISMOUQ_HIST
+  Prueba 7  vista materializada MV_OCUPACION_MENSUAL y su refresco programado
+=========================================================================
+
+FECHA    CATEGORIA ANIO_TEMPORADA VALOR_NOCHE
+-------- --------- -------------- -----------
+12/12/26 MEDIA               2026      107000
+13/12/26 MEDIA               2026      107000
+14/12/26 MEDIA               2026      107000
+15/12/26 ALTA                2026      162000
+16/12/26 ALTA                2026      162000
+
+
+VALOR_FUNCION SUMA_NOCHE_POR_NOCHE
+------------- --------------------
+       645000               645000
+
+
+FECHA    CATEGORIA ANIO_TEMPORADA VALOR_NOCHE
+-------- --------- -------------- -----------
+10/01/26 ALTA                2025      152000
+11/01/26 ALTA                2025      152000
+12/01/26 MEDIA               2026      107000
+13/01/26 MEDIA               2026      107000
+
+
+VALOR_FUNCION
+-------------
+       518000
+
+
+LINEAS_REVISADAS    IGUALES DIFERENTES
+---------------- ---------- ----------
+            2000       2000          0
+
+--- Prueba 1.4a: checkout antes del check-in
+Error esperado: ORA-20001: El checkout debe ser posterior al check-in
+
+Procedimiento PL/SQL terminado correctamente.
+--- Prueba 1.4b: fechas fuera del calendario
+Error esperado: ORA-20005: Hay 4 noche(s) sin tarifa o fuera del calendario
+
+Procedimiento PL/SQL terminado correctamente.
+--- Prueba 2.1: reserva válida
+Reserva creada: 25004 en la habitación 3
+
+Procedimiento PL/SQL terminado correctamente.
+
+ID_RESERVA ID_CLIENTE ID_ALOJAMIENTO FECHA_CH FECHA_CH ESTADO       ID_HABITACION NUM_HUESPEDES VALOR_ESTADIA
+---------- ---------- -------------- -------- -------- ------------ ------------- ------------- -------------
+     25004          1              1 12/12/26 17/12/26 CONFIRMADA               3             2        961000
+
+--- Prueba 2.2: habitación no disponible
+Error esperado (e_no_disponible): ORA-20002: La habitación 3 no está disponible del 14/12/2026 al 19/12/2026
+
+Procedimiento PL/SQL terminado correctamente.
+--- Prueba 2.3: checkout igual al check-in
+Error esperado (e_fechas_invalidas): ORA-20001: El checkout (20/12/2026) debe ser posterior al check-in (20/12/2026)
+
+Procedimiento PL/SQL terminado correctamente.
+--- Prueba 2.4: capacidad excedida
+Error esperado (e_capacidad): ORA-20003: La habitación 3 admite máximo 3 huésped(es) y se pidieron 25
+
+Procedimiento PL/SQL terminado correctamente.
+--- Prueba 2.5: check-in el día del checkout anterior
+Reserva creada: 25005 (no se cruza con la anterior)
+
+Procedimiento PL/SQL terminado correctamente.
+--- Prueba 3: insertar directo una línea que se cruza
+Bloqueado por el disparador: ORA-20010: La habitación 3 ya está ocupada entre el 13/12/2026 y el 15/12/2026 (choca con la reserva 25004)
+ORA-06512: en "TURISMOUQ.TRG_RESHAB_SOLAPE", línea 31
+ORA-04088: error durante la ejecución del disparador 'TURISMOUQ.TRG_RESHAB_SOLAPE'
+
+Procedimiento PL/SQL terminado correctamente.
+
+10 filas actualizadas.
+
+
+10 filas actualizadas.
+
+
+ ID_TARIFA       ANIO CATEGORIA VALOR_ANTERIOR VALOR_NUEVO USUARIO_BD   USUARIO_SO     EQUIPO           FECHA_CAMBIO        FILAS_EN_SENTENCIA
+---------- ---------- --------- -------------- ----------- ------------ -------------- ---------------- ------------------- ------------------
+         3       2023 ALTA              195000      205000 TURISMOUQ    fospi          Fospinav         26/10/2026 11:50:36                 10
+        35       2024 ALTA              208000      218000 TURISMOUQ    fospi          Fospinav         26/10/2026 11:50:36                 10
+        67       2024 MEDIA             137000      147000 TURISMOUQ    fospi          Fospinav         26/10/2026 11:50:36                 10
+        99       2024 BAJA              112000      122000 TURISMOUQ    fospi          Fospinav         26/10/2026 11:50:36                 10
+       131       2025 ALTA              227000      237000 TURISMOUQ    fospi          Fospinav         26/10/2026 11:50:36                 10
+       163       2025 MEDIA             149000      159000 TURISMOUQ    fospi          Fospinav         26/10/2026 11:50:36                 10
+       195       2025 BAJA              122000      132000 TURISMOUQ    fospi          Fospinav         26/10/2026 11:50:36                 10
+       227       2026 ALTA              242000      252000 TURISMOUQ    fospi          Fospinav         26/10/2026 11:50:36                 10
+       259       2026 MEDIA             159000      169000 TURISMOUQ    fospi          Fospinav         26/10/2026 11:50:36                 10
+       291       2026 BAJA              131000      141000 TURISMOUQ    fospi          Fospinav         26/10/2026 11:50:36                 10
+
+10 filas seleccionadas. 
+
+Liquidación 2025-12 (comisión 15 %)
+Alojamiento                          Reservas            Total          A pagar
+Hotel Cafetal Plaza                        34       34.017.000       28.914.450
+Hotel Bosques del Quindío                  18       17.918.000       15.230.300
+Hotel Mirador de los Andes                 27       23.929.000       20.339.650
+Hotel Palma de Cera                        21       17.559.000       14.925.150
+Hotel Nogal Real                           21       32.123.000       27.304.550
+Hotel Portal del Eje                       15       19.557.000       16.623.450
+Hotel Guadua Centro                        32       29.768.000       25.302.800
+Hostal La Mochila                          18        7.050.000        5.992.500
+Hostal Cocora Backpackers                   5        1.569.000        1.333.650
+Hostal Barranquero                         18        6.674.000        5.672.900
+Finca La Esperanza                         11       13.396.000       11.386.600
+Casa Campestre Los Almendros                7        8.657.000        7.358.450
+Glamping Nubes de Café                     20       40.039.000       34.033.150
+Glamping Cielo Abierto                     33       88.136.000       74.915.600
+Glamping Luna de Cocora                    28       68.382.000       58.124.700
+Glamping Domo Andino                       32       73.735.000       62.674.750
+Hostal Casa Bahareque                      55       15.022.000       12.768.700
+Hostal Café y Montaña                      50       13.032.000       11.077.200
+Hostal El Colibrí                          46       12.812.000       10.890.200
+Finca El Balso                             21       32.666.000       27.766.100
+Finca Villa Café                           33       54.813.000       46.591.050
+Hotel Torre Milenio                        17       25.350.000       21.547.500
+Finca Los Guaduales                        20       19.784.000       16.816.400
+Finca El Porvenir                          14       14.830.000       12.605.500
+Finca La Aurora                            21       26.644.000       22.647.400
+Finca San Alberto                          10       14.577.000       12.390.450
+Finca Buenos Aires                          6        6.756.000        5.742.600
+Hotel Los Fundadores                       55       57.645.000       48.998.250
+Glamping El Mirador                        25       60.205.000       51.174.250
+Casa Campestre El Refugio                  15       15.093.000       12.829.050
+Finca La Primavera                         16       10.560.000        8.976.000
+Finca El Edén Cafetero                      9       13.623.000       11.579.550
+Finca Santa Rita                           13       19.152.000       16.279.200
+Finca Las Acacias                           9       17.004.000       14.453.400
+Hotel Colina Verde                         19       18.396.000       15.636.600
+Glamping Bambú y Estrellas                 11       19.807.000       16.835.950
+Casa Campestre La Quinta                   10       14.673.000       12.472.050
+Glamping La Burbuja                         9       27.449.000       23.331.650
+Glamping Río Verde                         19       60.876.000       51.744.600
+Hostal La Posada del Viajero               24        6.623.000        5.629.550
+Finca La Cabaña                             9       12.871.000       10.940.350
+Finca El Recreo                             6        5.209.000        4.427.650
+Casa Campestre Villa Sol                   11        9.992.000        8.493.200
+Hotel El Bosque Real                        6       11.071.000        9.410.350
+Hotel Valle Dorado                         11       12.142.000       10.320.700
+Finca Monteverde                            8       13.339.000       11.338.150
+Finca La Floresta                          10       12.426.000       10.562.100
+Casa Campestre Las Heliconias               5        6.134.000        5.213.900
+Hotel Cordillera                           16       18.790.000       15.971.500
+Finca El Descanso                           3        3.186.000        2.708.100
+Finca Los Naranjos                         14       13.058.000       11.099.300
+Casa Campestre El Arrayán                   2        1.446.000        1.229.100
+Finca La Palmera                           10       15.915.000       13.527.750
+Glamping Altos del Roble                    7       19.166.000       16.291.100
+Casa Campestre Brisas del Quindío           2        2.837.000        2.411.450
+Finca El Mirador Cafetero                   4        5.428.000        4.613.800
+Glamping Cumbre Quindiana                  10       24.121.000       20.502.850
+Finca Tierra Linda                          5        4.974.000        4.227.900
+Casa Campestre La Loma                      2        2.848.000        2.420.800
+Hostal Pijao Slow                           4        1.239.000        1.053.150
+TOTAL (60 alojamientos)                          1.256.093.000    1.067.679.050
+
+Procedimiento PL/SQL terminado correctamente.
+
+ID_ALOJAMIENTO NOMBRE_COMERCIAL                   RESERVAS     NOCHES INGRESO_ESTADIA INGRESO_SERVICIOS      TOTAL   COMISION VALOR_A_PAGAR
+-------------- -------------------------------- ---------- ---------- --------------- ----------------- ---------- ---------- -------------
+            14 Glamping Cielo Abierto                   33        106        77805000          10331000   88136000   13220400      74915600
+            16 Glamping Domo Andino                     32         91        63877000           9858000   73735000   11060250      62674750
+            15 Glamping Luna de Cocora                  28         89        60073000           8309000   68382000   10257300      58124700
+            39 Glamping Río Verde                       19         66        54103000           6773000   60876000    9131400      51744600
+            29 Glamping El Mirador                      25         87        53317000           6888000   60205000    9030750      51174250
+            28 Hotel Los Fundadores                     55        166        46274000          11371000   57645000    8646750      48998250
+            21 Finca Villa Café                         33         98        47847000           6966000   54813000    8221950      46591050
+            13 Glamping Nubes de Café                   20         63        35578000           4461000   40039000    6005850      34033150
+             1 Hotel Cafetal Plaza                      34         98        25211000           8806000   34017000    5102550      28914450
+            20 Finca El Balso                           21         65        27768000           4898000   32666000    4899900      27766100
+
+10 filas seleccionadas. 
+
+
+TOTAL_LIQUIDADO TOTAL_RESERVAS       DIFERENCIA
+--------------- -------------- ----------------
+     1256093000     1256093000                0
+
+Liquidación 2025-12 (comisión 15 %)
+Alojamiento                          Reservas            Total          A pagar
+Hotel Cafetal Plaza                        34       34.017.000       28.914.450
+TOTAL (1 alojamientos)                              34.017.000       28.914.450
+
+Procedimiento PL/SQL terminado correctamente.
+--- Prueba 5.4: mes 13
+Error esperado: ORA-20008: Año o mes inválido: 2025-13
+
+Procedimiento PL/SQL terminado correctamente.
+Rollback terminado.
+
+SEGMENT_NAME                                                                                                                     SEGMENT_TYPE       TABLESPACE_NAME                        MB
+-------------------------------------------------------------------------------------------------------------------------------- ------------------ ------------------------------ ----------
+PK_RESERVA_HISTORICO                                                                                                             INDEX              TS_TURISMOUQ_HIST              ,25       
+RESERVA                                                                                                                          TABLE              USERS                                   2
+RESERVA_HISTORICO                                                                                                                TABLE              TS_TURISMOUQ_HIST              ,69       
+
+
+ESTADO         RESERVAS            VALOR
+------------ ---------- ----------------
+COMPLETADA         6329    6,478,697,000
+CANCELADA           906      966,375,000
+
+
+MVIEW_NAME                                                                                                                       REFRESH_ REFRESH_M ULTIMO_REFRESCO    
+-------------------------------------------------------------------------------------------------------------------------------- -------- --------- -------------------
+MV_OCUPACION_MENSUAL                                                                                                             COMPLETE DEMAND    26/10/2026 11:50:04
+
+
+GRUPO                                                                                                                            PROXIMO_REFRESCO
+-------------------------------------------------------------------------------------------------------------------------------- ----------------
+INTERVALO                                                                                                                                                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+MV_OCUPACION_MENSUAL                                                                                                             27/10/2026 01:00 
+TRUNC(SYSDATE) + 1 + 1/24                                                                                                                                                                               
+
+
+
+NOMBRE_COMERCIAL                 MUNICIPIO    NOCHES_OCUPADAS HABITACIONES   DIAS_MES PCT_OCUPACION
+-------------------------------- ------------ --------------- ------------ ---------- -------------
+Finca Villa Café                 Salento                  103            6         31          55,4
+Glamping Luna de Cocora          Salento                   78            5         31          50,3
+Finca Los Guaduales              Montenegro                62            4         31            50
+Glamping Cielo Abierto           Salento                  107            7         31          49,3
+Glamping Nubes de Café           Salento                   72            5         31          46,5
+Glamping Río Verde               Filandia                  67            5         31          43,2
+Hostal El Colibrí                Salento                  144           11         31          42,2
+Glamping El Mirador              Montenegro                91            7         31          41,9
+Glamping Domo Andino             Salento                   87            7         31          40,1
+Casa Campestre La Quinta         Quimbaya                  36            3         31          38,7
+
+10 filas seleccionadas. 
+
+
+NOCHES_EN_VISTA NOCHES_EN_VIVO       DIFERENCIA
+--------------- -------------- ----------------
+          68587          68587                0
+
+Procedimiento PL/SQL terminado correctamente.
+
+MVIEW_NAME                                                                                                                       ULTIMO_REFRESCO    
+-------------------------------------------------------------------------------------------------------------------------------- -------------------
+MV_OCUPACION_MENSUAL                                                                                                             26/10/2026 11:50:52
+

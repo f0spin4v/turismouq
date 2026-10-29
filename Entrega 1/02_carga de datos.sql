@@ -1,6 +1,8 @@
 -- TurismoUQ - Bases de Datos II (2026-2), grupo 01N
 -- Equipo: Andrés Ospina Vera, Juan Esteban Cuervo Jimenez
 -- Script 2: carga de datos (Oracle XE 21c)
+-- Orden de ejecución: 01_DDL_TurismoUQ.sql, 02_carga de datos.sql, 03_consultas_TurismoUQ.sql
+-- Correr después del script 1, completo con F5. Se demora unos minutos.
 -- Se puede correr varias veces porque al inicio vacía las tablas.
 --
 -- Los catálogos van con INSERT. Habitaciones, servicios, clientes, reservas,
@@ -280,7 +282,9 @@ END;
 
 
 -- 5. Temporadas, periodos y calendario (decisión de diseño 1)
--- 9 temporadas: alta, media y baja de 2024, 2025 y 2026.
+-- 10 temporadas: alta, media y baja de 2024, 2025 y 2026, más la alta de 2023.
+-- La alta de 2023 existe porque el calendario empieza el 01/01/2024 en plena
+-- temporada de fin de año 2023-2024, y esa temporada es del año en que empieza.
 -- Los periodos usan las fechas reales de Semana Santa y los festivos.
 -- Alta: Semana Santa, mitad de año, fin de año y puentes festivos.
 -- Media: enero después de Reyes, final de vacaciones, receso de octubre
@@ -288,6 +292,7 @@ END;
 -- Baja: los demás días.
 -- La fecha de cada periodo es la noche que se cobra.
 -- Fin de año cuenta para el año en que empieza.
+INSERT INTO temporada (anio, categoria) VALUES (2023, 'ALTA');
 INSERT INTO temporada (anio, categoria) VALUES (2024, 'ALTA');
 INSERT INTO temporada (anio, categoria) VALUES (2024, 'MEDIA');
 INSERT INTO temporada (anio, categoria) VALUES (2024, 'BAJA');
@@ -299,7 +304,7 @@ INSERT INTO temporada (anio, categoria) VALUES (2026, 'MEDIA');
 INSERT INTO temporada (anio, categoria) VALUES (2026, 'BAJA');
 
 -- 80 periodos continuos desde 01/01/2024 hasta 10/01/2027
-INSERT INTO periodo_temporada (id_temporada, nombre, fecha_inicio, fecha_fin) VALUES ((SELECT id_temporada FROM temporada WHERE anio = 2024 AND categoria = 'ALTA'), 'Fin de año 2023-2024', DATE '2024-01-01', DATE '2024-01-07');
+INSERT INTO periodo_temporada (id_temporada, nombre, fecha_inicio, fecha_fin) VALUES ((SELECT id_temporada FROM temporada WHERE anio = 2023 AND categoria = 'ALTA'), 'Fin de año 2023-2024', DATE '2024-01-01', DATE '2024-01-07');
 INSERT INTO periodo_temporada (id_temporada, nombre, fecha_inicio, fecha_fin) VALUES ((SELECT id_temporada FROM temporada WHERE anio = 2024 AND categoria = 'MEDIA'), 'Post-temporada de enero 2024', DATE '2024-01-08', DATE '2024-01-31');
 INSERT INTO periodo_temporada (id_temporada, nombre, fecha_inicio, fecha_fin) VALUES ((SELECT id_temporada FROM temporada WHERE anio = 2024 AND categoria = 'BAJA'), 'Temporada baja 2024 - tramo 1', DATE '2024-02-01', DATE '2024-03-21');
 INSERT INTO periodo_temporada (id_temporada, nombre, fecha_inicio, fecha_fin) VALUES ((SELECT id_temporada FROM temporada WHERE anio = 2024 AND categoria = 'ALTA'), 'Semana Santa 2024', DATE '2024-03-22', DATE '2024-03-30');
@@ -433,7 +438,7 @@ SELECT h.id_habitacion,
              WHEN 'MEDIA' THEN 1.00
              ELSE              0.95 - MOD(ORA_HASH(a.id_alojamiento * 7), 21) / 100
            END
-         * CASE t.anio WHEN 2024 THEN 0.92 WHEN 2025 THEN 1.00 ELSE 1.07 END
+         * CASE t.anio WHEN 2023 THEN 0.86 WHEN 2024 THEN 0.92 WHEN 2025 THEN 1.00 ELSE 1.07 END
        , -3) AS valor_noche
 FROM   habitacion h
 JOIN   alojamiento a       ON a.id_alojamiento = h.id_alojamiento

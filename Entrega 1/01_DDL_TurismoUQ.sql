@@ -1,6 +1,7 @@
 -- TurismoUQ - Bases de Datos II (2026-2), grupo 01N
--- Equipo: Andrés Ospina Vera, Juan Esteban Curvo Jimenez
+-- Equipo: Andrés Ospina Vera, Juan Esteban Cuervo Jimenez
 -- Script 1: creación de tablas y restricciones (Oracle XE 21c)
+-- Orden de ejecución: 01_DDL_TurismoUQ.sql, 02_carga de datos.sql, 03_consultas_TurismoUQ.sql
 -- Se puede correr varias veces porque primero borra las tablas.
 -- Prefijos de las restricciones: pk_, fk_, uq_ y ck_
 
