@@ -1,7 +1,8 @@
 -- TurismoUQ - Bases de Datos II (2026-2), grupo 01N
 -- Equipo: Andrés Ospina Vera, Juan Esteban Cuervo Jimenez
 -- Script 4: paquete PL/SQL (función, procedimiento y cursor) - Entrega 2
--- Orden de ejecución: scripts 01 a 03 de la Entrega 1, luego 04, 05, 06 y 07
+-- Versión corregida después de la retroalimentación: SAVEPOINT en sp_crear_reserva
+-- Orden de ejecución: scripts 00 a 03 de la Entrega 1, luego 04, 05, 06 y 07
 -- Se corre con la conexión TurismoUQ, completo con F5.
 --
 -- El paquete pkg_turismouq junta:
@@ -171,6 +172,8 @@ CREATE OR REPLACE PACKAGE BODY pkg_turismouq AS
   -- Valida en este orden: fechas, estado, cliente, habitación, capacidad y
   -- disponibilidad. Si todo está bien, calcula el valor con fn_valor_estadia
   -- y guarda el encabezado (RESERVA) y la línea (RESERVA_HABITACION).
+  -- Encabezado y línea quedan protegidos con un SAVEPOINT: se guardan los
+  -- dos o ninguno.
   -- -------------------------------------------------------------------
   PROCEDURE sp_crear_reserva (
     p_id_cliente     IN  cliente.id_cliente%TYPE,
@@ -261,16 +264,29 @@ CREATE OR REPLACE PACKAGE BODY pkg_turismouq AS
     v_valor := fn_valor_estadia(p_id_habitacion, v_in, v_out);
 
     -- 8. Guardar encabezado y línea
-    INSERT INTO reserva (id_cliente, id_alojamiento, fecha_reserva,
-                         fecha_checkin, fecha_checkout, estado)
-    VALUES (p_id_cliente, v_id_aloj, SYSDATE, v_in, v_out, p_estado)
-    RETURNING id_reserva INTO p_id_reserva;
+    -- (Corrección después de la Entrega 2) El SAVEPOINT marca el punto justo
+    -- antes de guardar. Si la línea falla después de guardar la cabecera
+    -- (por ejemplo, la rechaza un disparador), se vuelve a este punto y la
+    -- cabecera se borra también: no queda una reserva huérfana sin
+    -- habitación. Lo que el que llama hizo antes del procedimiento no se toca.
+    SAVEPOINT sp_antes_reserva;
+    BEGIN
+      INSERT INTO reserva (id_cliente, id_alojamiento, fecha_reserva,
+                           fecha_checkin, fecha_checkout, estado)
+      VALUES (p_id_cliente, v_id_aloj, SYSDATE, v_in, v_out, p_estado)
+      RETURNING id_reserva INTO p_id_reserva;
 
-    INSERT INTO reserva_habitacion (id_reserva, id_alojamiento, id_habitacion,
-                                    fecha_checkin, fecha_checkout,
-                                    num_huespedes, valor_estadia)
-    VALUES (p_id_reserva, v_id_aloj, p_id_habitacion,
-            v_in, v_out, p_num_huespedes, v_valor);
+      INSERT INTO reserva_habitacion (id_reserva, id_alojamiento, id_habitacion,
+                                      fecha_checkin, fecha_checkout,
+                                      num_huespedes, valor_estadia)
+      VALUES (p_id_reserva, v_id_aloj, p_id_habitacion,
+              v_in, v_out, p_num_huespedes, v_valor);
+    EXCEPTION
+      WHEN OTHERS THEN
+        ROLLBACK TO sp_antes_reserva;
+        p_id_reserva := NULL;
+        RAISE;
+    END;
   END sp_crear_reserva;
 
 

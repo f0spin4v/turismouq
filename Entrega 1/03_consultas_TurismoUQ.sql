@@ -1,7 +1,7 @@
 -- TurismoUQ - Bases de Datos II (2026-2), grupo 01N
 -- Equipo: Andrés Ospina Vera, Juan Esteban Cuervo Jimenez
 -- Script 3: consultas de análisis (Oracle XE 21c)
--- Orden de ejecución: 01_DDL_TurismoUQ.sql, 02_carga de datos.sql, 03_consultas_TurismoUQ.sql
+-- Orden de ejecución: 00_usuario_SYSTEM.sql (como SYSTEM), 01_DDL_TurismoUQ.sql, 02_carga de datos.sql, 03_consultas_TurismoUQ.sql
 -- Correr después de los scripts 1 y 2, completo con F5.
 --
 -- Ingreso de una reserva = valor guardado de sus habitaciones (valor_estadia)

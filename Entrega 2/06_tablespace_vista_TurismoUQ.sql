@@ -1,7 +1,8 @@
 -- TurismoUQ - Bases de Datos II (2026-2), grupo 01N
 -- Equipo: Andrés Ospina Vera, Juan Esteban Cuervo Jimenez
 -- Script 6: tablespace del histórico y vista materializada - Entrega 2
--- Orden de ejecución: scripts 01 a 03 de la Entrega 1, luego 04, 05, 06 y 07
+-- Versión corregida después de la retroalimentación: la vista muestra los meses sin ocupación
+-- Orden de ejecución: scripts 00 a 03 de la Entrega 1, luego 04, 05, 06 y 07
 -- Se corre con la conexión TurismoUQ, completo con F5.
 --
 -- Requisito (una sola vez): crear un tablespace y programar el refresco de
@@ -115,14 +116,20 @@ COMMIT;
 -- mes y porcentaje de ocupación. Cuentan las reservas CONFIRMADA y
 -- COMPLETADA, y cada estadía se reparte noche por noche con CALENDARIO.
 --
+-- (Corrección después de la Entrega 2) Antes la vista partía de las
+-- reservas, así que un mes en el que un alojamiento no vendió ninguna noche
+-- no salía. Ahora parte de TODAS las combinaciones alojamiento x mes del
+-- calendario (base) y le pega la ocupación con LEFT JOIN: el mes sin
+-- reservas aparece con 0 noches y 0 %.
+--
 -- Política de refresco: COMPLETA, una vez al día a la 1:00 a.m., y a mano
 -- cuando se necesite con DBMS_MVIEW.REFRESH.
 --   - No es ON COMMIT: refrescar en cada reserva haría más lenta cada
 --     operación del día, y la ocupación mensual es un informe de gerencia
 --     que no necesita estar al segundo.
 --   - No es FAST (incremental): la consulta une rangos de fechas con el
---     calendario y agrupa; Oracle no puede refrescar eso por partes, y
---     además pediría logs en cada tabla base.
+--     calendario, usa LEFT JOIN y agrupa; Oracle no puede refrescar eso por
+--     partes, y además pediría logs en cada tabla base.
 --   - Una vez al día, de madrugada, cuando casi nadie reserva: el informe
 --     amanece al día y el costo de recalcular no molesta a los usuarios.
 CREATE MATERIALIZED VIEW mv_ocupacion_mensual
@@ -131,27 +138,44 @@ REFRESH COMPLETE
 START WITH TRUNC(SYSDATE) + 1 + 1/24
 NEXT TRUNC(SYSDATE) + 1 + 1/24
 AS
-SELECT o.id_alojamiento,
+-- Primero se calculan las noches vendidas por alojamiento y mes UNA sola
+-- vez (MATERIALIZE las guarda en una tabla temporal). Sin esto Oracle
+-- puede repetir ese cálculo pesado por cada combinación alojamiento x mes.
+WITH ocupacion AS (
+  SELECT /*+ MATERIALIZE */
+         r.id_alojamiento, c.anio, c.mes, COUNT(*) AS noches_ocupadas
+  FROM   reserva_habitacion l
+  JOIN   reserva r    ON r.id_reserva = l.id_reserva
+  JOIN   calendario c ON c.fecha >= l.fecha_checkin
+                     AND c.fecha <  l.fecha_checkout
+  WHERE  r.estado IN ('CONFIRMADA', 'COMPLETADA')
+  GROUP BY r.id_alojamiento, c.anio, c.mes
+),
+-- Base: cada alojamiento con cada mes del calendario
+base AS (
+  SELECT /*+ MATERIALIZE */
+         al.id_alojamiento, d.anio, d.mes, d.dias_mes
+  FROM   alojamiento al
+  CROSS JOIN (SELECT anio, mes, COUNT(*) AS dias_mes
+              FROM   calendario
+              GROUP BY anio, mes) d
+)
+SELECT b.id_alojamiento,
        a.nombre_comercial,
        m.nombre                                                     AS municipio,
-       o.anio,
-       o.mes,
-       o.noches_ocupadas,
+       b.anio,
+       b.mes,
+       NVL(o.noches_ocupadas, 0)                                    AS noches_ocupadas,
        h.habitaciones,
-       d.dias_mes,
-       ROUND(100 * o.noches_ocupadas / (h.habitaciones * d.dias_mes), 1) AS pct_ocupacion
-FROM  (SELECT r.id_alojamiento, c.anio, c.mes, COUNT(*) AS noches_ocupadas
-       FROM   reserva_habitacion l
-       JOIN   reserva r    ON r.id_reserva = l.id_reserva
-       JOIN   calendario c ON c.fecha >= l.fecha_checkin
-                          AND c.fecha <  l.fecha_checkout
-       WHERE  r.estado IN ('CONFIRMADA', 'COMPLETADA')
-       GROUP BY r.id_alojamiento, c.anio, c.mes) o
+       b.dias_mes,
+       ROUND(100 * NVL(o.noches_ocupadas, 0) / (h.habitaciones * b.dias_mes), 1) AS pct_ocupacion
+FROM   base b
+-- Noches vendidas (puede no haber: por eso LEFT JOIN)
+LEFT JOIN ocupacion o
+       ON o.id_alojamiento = b.id_alojamiento AND o.anio = b.anio AND o.mes = b.mes
 JOIN  (SELECT id_alojamiento, COUNT(*) AS habitaciones
-       FROM habitacion GROUP BY id_alojamiento) h ON h.id_alojamiento = o.id_alojamiento
-JOIN  (SELECT anio, mes, COUNT(*) AS dias_mes
-       FROM calendario GROUP BY anio, mes) d ON d.anio = o.anio AND d.mes = o.mes
-JOIN   alojamiento a ON a.id_alojamiento = o.id_alojamiento
+       FROM habitacion GROUP BY id_alojamiento) h ON h.id_alojamiento = b.id_alojamiento
+JOIN   alojamiento a ON a.id_alojamiento = b.id_alojamiento
 JOIN   municipio m   ON m.id_municipio = a.id_municipio;
 
 COMMENT ON MATERIALIZED VIEW mv_ocupacion_mensual IS 'Ocupación mensual por alojamiento; refresco completo diario a la 1:00 a.m.';
@@ -181,4 +205,12 @@ SELECT mview_name, refresh_method, refresh_mode, build_mode,
 FROM   user_mviews
 WHERE  mview_name = 'MV_OCUPACION_MENSUAL';
 
-SELECT COUNT(*) AS filas_vista FROM mv_ocupacion_mensual;
+-- Debe haber una fila por cada alojamiento y cada mes del calendario,
+-- incluidos los meses en 0
+SELECT v.filas_vista,
+       (SELECT COUNT(*) FROM alojamiento) *
+       (SELECT COUNT(DISTINCT TO_CHAR(fecha, 'YYYYMM')) FROM calendario) AS filas_esperadas,
+       v.meses_en_cero
+FROM  (SELECT COUNT(*)                                             AS filas_vista,
+              SUM(CASE WHEN noches_ocupadas = 0 THEN 1 ELSE 0 END) AS meses_en_cero
+       FROM   mv_ocupacion_mensual) v;

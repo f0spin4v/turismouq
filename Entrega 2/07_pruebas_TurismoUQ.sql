@@ -1,7 +1,10 @@
 -- TurismoUQ - Bases de Datos II (2026-2), grupo 01N
 -- Equipo: Andrés Ospina Vera, Juan Esteban Cuervo Jimenez
 -- Script 7: pruebas de la Entrega 2 (evidencia)
--- Orden de ejecución: scripts 01 a 03 de la Entrega 1, luego 04, 05, 06 y 07
+-- Versión corregida: incluye las pruebas de las correcciones hechas después
+-- de la retroalimentación (SAVEPOINT, solapes con INSERT ... SELECT y
+-- UPDATE, auditoría de INSERT y DELETE, meses en cero en la vista)
+-- Orden de ejecución: scripts 00 a 03 de la Entrega 1, luego 04, 05, 06 y 07
 -- Se corre con la conexión TurismoUQ, completo con F5.
 --
 -- Prueba cada componente con casos que deben funcionar y casos que deben
@@ -21,9 +24,11 @@ COLUMN municipio        FORMAT A12
 COLUMN usuario_bd       FORMAT A12
 COLUMN usuario_so       FORMAT A14
 COLUMN equipo           FORMAT A16
+COLUMN operacion        FORMAT A9
 
 VARIABLE b_hab NUMBER
 VARIABLE b_res NUMBER
+VARIABLE b_res2 NUMBER
 
 
 -- =====================================================================
@@ -105,6 +110,60 @@ END;
 -- =====================================================================
 -- PRUEBA 2: sp_crear_reserva
 -- =====================================================================
+
+-- 2.0 (Corrección) SAVEPOINT: si la línea falla, no queda la cabecera huérfana.
+-- Para provocar una falla justo en la línea se crea un disparador de prueba
+-- que rechaza cualquier línea nueva, y se borra al terminar la prueba.
+-- Va de primera en la Prueba 2 porque CREATE y DROP TRIGGER hacen COMMIT
+-- automático, y en este punto todavía no hay cambios de prueba pendientes.
+CREATE OR REPLACE TRIGGER trg_prueba_falla_linea
+BEFORE INSERT ON reserva_habitacion
+FOR EACH ROW
+BEGIN
+  RAISE_APPLICATION_ERROR(-20099, 'Falla simulada al guardar la línea de la reserva');
+END;
+/
+
+DECLARE
+  v_hab      habitacion.id_habitacion%TYPE;
+  v_res      reserva.id_reserva%TYPE;
+  v_antes    PLS_INTEGER;
+  v_despues  PLS_INTEGER;
+BEGIN
+  DBMS_OUTPUT.PUT_LINE('--- Prueba 2.0: la línea falla después de guardar la cabecera');
+
+  SELECT MIN(h.id_habitacion) INTO v_hab
+  FROM   habitacion h
+  WHERE  h.capacidad >= 1
+  AND NOT EXISTS (SELECT 1
+                  FROM   reserva_habitacion l
+                  JOIN   reserva r ON r.id_reserva = l.id_reserva
+                  WHERE  l.id_habitacion = h.id_habitacion
+                  AND    r.estado IN ('CONFIRMADA', 'COMPLETADA')
+                  AND    l.fecha_checkin  < DATE '2026-12-22'
+                  AND    l.fecha_checkout > DATE '2026-12-20');
+
+  SELECT COUNT(*) INTO v_antes FROM reserva;
+
+  BEGIN
+    pkg_turismouq.sp_crear_reserva(1, v_hab, DATE '2026-12-20', DATE '2026-12-22', 1, v_res);
+    DBMS_OUTPUT.PUT_LINE('FALLA: la línea debió fallar');
+  EXCEPTION
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Error al guardar la línea: ' || SQLERRM);
+  END;
+
+  SELECT COUNT(*) INTO v_despues FROM reserva;
+  DBMS_OUTPUT.PUT_LINE('Reservas antes: ' || v_antes || ' | después: ' || v_despues);
+  IF v_antes = v_despues THEN
+    DBMS_OUTPUT.PUT_LINE('Bien: el ROLLBACK TO sp_antes_reserva borró también la cabecera');
+  ELSE
+    DBMS_OUTPUT.PUT_LINE('FALLA: quedó una cabecera huérfana');
+  END IF;
+END;
+/
+
+DROP TRIGGER trg_prueba_falla_linea;
 
 -- 2.1 Caso exitoso: busca una habitación libre del 12 al 17 de diciembre de
 -- 2026 que admita 2 huéspedes y le crea una reserva al cliente 1.
@@ -194,13 +253,14 @@ DECLARE
 BEGIN
   DBMS_OUTPUT.PUT_LINE('--- Prueba 2.5: check-in el día del checkout anterior');
   pkg_turismouq.sp_crear_reserva(2, :b_hab, DATE '2026-12-17', DATE '2026-12-19', 1, v_res);
+  :b_res2 := v_res;
   DBMS_OUTPUT.PUT_LINE('Reserva creada: ' || v_res || ' (no se cruza con la anterior)');
 END;
 /
 
 
 -- =====================================================================
--- PRUEBA 3: disparador de fila trg_reshab_solape
+-- PRUEBA 3: disparador compuesto trg_reshab_solape
 -- =====================================================================
 -- Se inserta directo en las tablas, sin pasar por sp_crear_reserva, para
 -- comprobar que el disparador frena el solape aunque alguien se salte el
@@ -230,6 +290,65 @@ END;
 /
 
 
+-- 3.2 (Corrección) INSERT ... SELECT de varias filas. Con la versión
+-- anterior esto daba ORA-04091 (tabla mutante). Ahora el disparador
+-- compuesto revisa al final de la sentencia y responde con -20010.
+DECLARE
+  v_aloj   habitacion.id_alojamiento%TYPE;
+  v_res    reserva.id_reserva%TYPE;
+  v_lineas PLS_INTEGER;
+BEGIN
+  DBMS_OUTPUT.PUT_LINE('--- Prueba 3.2: INSERT ... SELECT con varias habitaciones');
+
+  SELECT id_alojamiento INTO v_aloj FROM habitacion WHERE id_habitacion = :b_hab;
+
+  INSERT INTO reserva (id_cliente, id_alojamiento, fecha_reserva,
+                       fecha_checkin, fecha_checkout, estado)
+  VALUES (4, v_aloj, SYSDATE, DATE '2026-12-13', DATE '2026-12-15', 'CONFIRMADA')
+  RETURNING id_reserva INTO v_res;
+
+  BEGIN
+    -- Todas las habitaciones del alojamiento en una sola sentencia;
+    -- una de ellas es :b_hab, que ya está ocupada esas noches
+    INSERT INTO reserva_habitacion (id_reserva, id_alojamiento, id_habitacion,
+                                    fecha_checkin, fecha_checkout, num_huespedes, valor_estadia)
+    SELECT v_res, h.id_alojamiento, h.id_habitacion,
+           DATE '2026-12-13', DATE '2026-12-15', 1, 100000
+    FROM   habitacion h
+    WHERE  h.id_alojamiento = v_aloj;
+    DBMS_OUTPUT.PUT_LINE('FALLA: el disparador no bloqueó el solape');
+  EXCEPTION
+    WHEN OTHERS THEN
+      DBMS_OUTPUT.PUT_LINE('Bloqueado (código ' || SQLCODE || '): ' || SQLERRM);
+  END;
+
+  -- Oracle deshace la sentencia completa: no entra ninguna de las filas
+  SELECT COUNT(*) INTO v_lineas FROM reserva_habitacion WHERE id_reserva = v_res;
+  DBMS_OUTPUT.PUT_LINE('Líneas que quedaron de esa sentencia: ' || v_lineas);
+END;
+/
+
+-- 3.3 (Corrección) UPDATE que mueve una reserva sobre fechas ocupadas.
+-- La reserva de la prueba 2.5 (17 al 19 de diciembre) se intenta correr
+-- al 15 de diciembre, encima de la reserva de la prueba 2.1.
+BEGIN
+  DBMS_OUTPUT.PUT_LINE('--- Prueba 3.3: UPDATE que crea un solape');
+  UPDATE reserva_habitacion
+  SET    fecha_checkin = DATE '2026-12-15'
+  WHERE  id_reserva = :b_res2;
+  DBMS_OUTPUT.PUT_LINE('FALLA: el disparador no bloqueó el UPDATE');
+EXCEPTION
+  WHEN OTHERS THEN
+    DBMS_OUTPUT.PUT_LINE('Bloqueado por el disparador: ' || SQLERRM);
+END;
+/
+
+-- La línea sigue con sus fechas originales (17 al 19)
+SELECT id_reserva, id_habitacion, fecha_checkin, fecha_checkout
+FROM   reserva_habitacion
+WHERE  id_reserva = :b_res2;
+
+
 -- =====================================================================
 -- PRUEBA 4: disparador de auditoría trg_tarifa_auditoria
 -- =====================================================================
@@ -245,13 +364,29 @@ UPDATE tarifa
 SET    valor_noche = valor_noche
 WHERE  id_habitacion = :b_hab;
 
-SELECT a.id_tarifa, te.anio, te.categoria, a.valor_anterior, a.valor_nuevo,
+-- (Corrección) DELETE e INSERT también quedan auditados. Se borra la
+-- tarifa de la última temporada de la habitación y se vuelve a crear con
+-- otro valor.
+DELETE FROM tarifa
+WHERE  id_habitacion = :b_hab
+AND    id_temporada  = (SELECT MAX(id_temporada) FROM temporada);
+
+INSERT INTO tarifa (id_habitacion, id_temporada, valor_noche)
+VALUES (:b_hab, (SELECT MAX(id_temporada) FROM temporada), 99000);
+
+-- Deben quedar 12 filas: 10 UPDATE, 1 DELETE y 1 INSERT
+SELECT a.operacion, a.id_tarifa, te.anio, te.categoria, a.valor_anterior, a.valor_nuevo,
        a.usuario_bd, a.usuario_so, a.equipo,
        TO_CHAR(a.fecha_cambio, 'DD/MM/YYYY HH24:MI:SS') AS fecha_cambio,
        a.filas_en_sentencia
 FROM   auditoria_tarifa a
 JOIN   temporada te ON te.id_temporada = a.id_temporada
 ORDER BY a.id_auditoria;
+
+SELECT operacion, COUNT(*) AS filas
+FROM   auditoria_tarifa
+GROUP BY operacion
+ORDER BY operacion;
 
 
 -- =====================================================================
@@ -369,3 +504,19 @@ EXEC DBMS_MVIEW.REFRESH('MV_OCUPACION_MENSUAL', 'C')
 SELECT mview_name, TO_CHAR(last_refresh_date, 'DD/MM/YYYY HH24:MI:SS') AS ultimo_refresco
 FROM   user_mviews
 WHERE  mview_name = 'MV_OCUPACION_MENSUAL';
+
+-- 7.5 (Corrección) Meses sin ocupación: ahora aparecen con 0 noches.
+-- Hay una fila por cada alojamiento y cada mes del calendario.
+SELECT v.filas_vista,
+       (SELECT COUNT(*) FROM alojamiento) *
+       (SELECT COUNT(DISTINCT TO_CHAR(fecha, 'YYYYMM')) FROM calendario) AS filas_esperadas,
+       v.meses_en_cero
+FROM  (SELECT COUNT(*)                                             AS filas_vista,
+              SUM(CASE WHEN noches_ocupadas = 0 THEN 1 ELSE 0 END) AS meses_en_cero
+       FROM   mv_ocupacion_mensual) v;
+
+SELECT nombre_comercial, municipio, anio, mes, noches_ocupadas, pct_ocupacion
+FROM   mv_ocupacion_mensual
+WHERE  noches_ocupadas = 0
+ORDER BY anio, mes, id_alojamiento
+FETCH FIRST 10 ROWS ONLY;
