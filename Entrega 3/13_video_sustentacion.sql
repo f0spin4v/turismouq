@@ -1,35 +1,72 @@
 -- TurismoUQ - Bases de Datos II (2026-2), grupo 01N
--- Equipo: Andrés Ospina Vera, Juan Esteban Cuervo Jimenez
--- Script 13: demostración en vivo para el video de sustentación
---
--- Se abre con la conexión TurismoUQ, DESPUÉS de correr los scripts 00 a 12.
--- Cada bloque se corre por separado: se selecciona el bloque con el mouse y
--- se presiona F5 (ejecutar script) sobre la selección.
--- El orden es el que pide el enunciado del video. Ningún bloque deja datos
--- nuevos: los que cambian algo terminan en ROLLBACK.
--- Antes de grabar: Herramientas > Preferencias > Editor de código > Fuentes,
--- tamaño 16 o más.
+-- Equipo: Andrés Ospina Vera, Juan Esteban Cuervo Jiménez
+-- Script 13: demostración en vivo del video, en el orden del enunciado.
+-- Uso: abrir con la conexión TurismoUQ, correr el bloque 0 antes de grabar
+-- y luego seleccionar cada bloque con el mouse y pulsar F5.
+-- Ningún bloque deja datos nuevos: los que cambian algo terminan en ROLLBACK.
 
+-- =====================================================================
+-- 0. PREPARACIÓN (antes de grabar)
+-- =====================================================================
 SET SERVEROUTPUT ON SIZE UNLIMITED
 SET DEFINE OFF
 SET LINESIZE 200
 SET PAGESIZE 100
-
-COLUMN tabla          FORMAT A20
-COLUMN categoria      FORMAT A9
-COLUMN operacion      FORMAT A9
-COLUMN usuario_bd     FORMAT A13
-COLUMN usuario_so     FORMAT A10
-COLUMN equipo         FORMAT A12
-COLUMN fecha_cambio   FORMAT A19
-COLUMN municipio      FORMAT A12
-COLUMN alojamiento    FORMAT A32
+COLUMN tabla FORMAT A20
+COLUMN categoria FORMAT A9
+COLUMN operacion FORMAT A9
+COLUMN usuario_bd FORMAT A13
+COLUMN usuario_so FORMAT A10
+COLUMN equipo FORMAT A12
+COLUMN fecha_cambio FORMAT A19
+COLUMN municipio FORMAT A12
+COLUMN alojamiento FORMAT A32
 COLUMN tipo_alojamiento FORMAT A16
 
 
 -- =====================================================================
--- PARTE 2. MODELO (2 min): volumen cargado
+-- 2. DISEÑO Y DECISIONES DE NEGOCIO (Andrés)
 -- =====================================================================
+-- 2.1 Decisión 1: reservas con varias habitaciones
+SELECT r.id_reserva, COUNT(*) AS habitaciones, SUM(l.valor_estadia) AS valor
+FROM   reserva r
+JOIN   reserva_habitacion l ON l.id_reserva = r.id_reserva
+GROUP BY r.id_reserva
+HAVING COUNT(*) >= 3
+ORDER BY r.id_reserva
+FETCH FIRST 3 ROWS ONLY;
+
+-- 2.2 Decisión 2: estadía que cruza temporadas, noche por noche
+SELECT c.fecha, te.categoria, te.anio AS temporada, t.valor_noche
+FROM   calendario c
+JOIN   temporada te ON te.id_temporada = c.id_temporada
+JOIN   tarifa t     ON t.id_temporada = c.id_temporada AND t.id_habitacion = 1
+WHERE  c.fecha >= DATE '2026-01-10' AND c.fecha < DATE '2026-01-14'
+ORDER BY c.fecha;
+
+-- A mano: 2 x 152.000 + 2 x 107.000 = 518.000. Ahora la función:
+SELECT pkg_turismouq.fn_valor_estadia(1, DATE '2026-01-10', DATE '2026-01-14') AS valor_funcion
+FROM   dual;
+
+-- 2.3 Regla 1: habitación de otro alojamiento -> ORA-02291
+INSERT INTO reserva_habitacion (id_reserva, id_alojamiento, id_habitacion,
+                                fecha_checkin, fecha_checkout, num_huespedes, valor_estadia)
+SELECT r.id_reserva, r.id_alojamiento, h.id_habitacion,
+       r.fecha_checkin, r.fecha_checkout, 1, 100000
+FROM   reserva r, habitacion h
+WHERE  r.id_reserva = 1
+AND    h.id_alojamiento <> r.id_alojamiento
+AND    ROWNUM = 1;
+
+-- 2.4 Regla 2: un día en dos temporadas -> ORA-00001
+INSERT INTO calendario (fecha, id_periodo, id_temporada)
+SELECT DATE '2025-12-24', id_periodo, id_temporada
+FROM   calendario
+WHERE  fecha = DATE '2025-09-10';
+
+ROLLBACK;
+
+-- 2.5 Volumen cargado
 SELECT 'MUNICIPIO' AS tabla, COUNT(*) AS filas FROM municipio UNION ALL
 SELECT 'TIPO_ALOJAMIENTO',   COUNT(*) FROM tipo_alojamiento UNION ALL
 SELECT 'ALOJAMIENTO',        COUNT(*) FROM alojamiento UNION ALL
@@ -47,21 +84,11 @@ SELECT 'RESERVA_SERVICIO',   COUNT(*) FROM reserva_servicio UNION ALL
 SELECT 'RESENA',             COUNT(*) FROM resena UNION ALL
 SELECT 'USUARIO_SISTEMA',    COUNT(*) FROM usuario_sistema;
 
--- Decisión 1: una reserva puede tener VARIAS habitaciones (RESERVA es la
--- cabecera y RESERVA_HABITACION las líneas). Ejemplo real:
-SELECT r.id_reserva, COUNT(*) AS habitaciones, SUM(l.valor_estadia) AS valor
-FROM   reserva r
-JOIN   reserva_habitacion l ON l.id_reserva = r.id_reserva
-GROUP BY r.id_reserva
-HAVING COUNT(*) >= 3
-ORDER BY r.id_reserva
-FETCH FIRST 3 ROWS ONLY;
-
 
 -- =====================================================================
--- PARTE 3. CONSULTAS DE ANÁLISIS (2 min)
+-- 3. CONSULTAS DE ANÁLISIS (Andrés)
 -- =====================================================================
--- 3.1 PIVOT: porcentaje de ocupación de cada municipio en cada mes de 2025
+-- 3.1 PIVOT: ocupación por municipio y mes de 2025
 WITH noches AS (
   SELECT a.id_municipio, c.mes, COUNT(*) AS noches_ocupadas
   FROM   reserva_habitacion l
@@ -95,7 +122,7 @@ PIVOT (
 )
 ORDER BY municipio;
 
--- 3.2 RANK: los 3 alojamientos con más ingresos dentro de cada municipio
+-- 3.2 RANK: los 3 alojamientos con más ingresos en cada municipio
 WITH estadia AS (
   SELECT id_reserva, SUM(valor_estadia) AS valor FROM reserva_habitacion GROUP BY id_reserva
 ),
@@ -125,23 +152,9 @@ ORDER BY municipio, puesto;
 
 
 -- =====================================================================
--- PARTE 4. CAPA PL/SQL (3 min)
+-- 4. CAPA PL/SQL (Juan)
 -- =====================================================================
--- 4.1 Estadía del 10 al 14 de enero de 2026 que cruza dos temporadas.
--- Primero noche por noche (para hacer la cuenta a mano):
-SELECT c.fecha, te.categoria, te.anio AS temporada, t.valor_noche
-FROM   calendario c
-JOIN   temporada te ON te.id_temporada = c.id_temporada
-JOIN   tarifa t     ON t.id_temporada = c.id_temporada AND t.id_habitacion = 1
-WHERE  c.fecha >= DATE '2026-01-10' AND c.fecha < DATE '2026-01-14'
-ORDER BY c.fecha;
-
--- A mano: 2 x 152.000 + 2 x 107.000 = 518.000. Ahora la función:
-SELECT pkg_turismouq.fn_valor_estadia(1, DATE '2026-01-10', DATE '2026-01-14') AS valor_funcion
-FROM   dual;
-
--- 4.2 Error propio de sp_crear_reserva: 25 huéspedes en una habitación
--- de 3 -> ORA-20003
+-- 4.1 Error propio de sp_crear_reserva -> ORA-20003
 DECLARE
   v_res NUMBER;
 BEGIN
@@ -149,8 +162,7 @@ BEGIN
 END;
 /
 
--- 4.3 El disparador rechaza un solape: se inserta directo, sin el
--- procedimiento, una línea encima de una reserva confirmada -> ORA-20010
+-- 4.2 El disparador rechaza un solape -> ORA-20010
 DECLARE
   v_hab   reserva_habitacion.id_habitacion%TYPE;
   v_aloj  reserva_habitacion.id_alojamiento%TYPE;
@@ -158,7 +170,6 @@ DECLARE
   v_out   DATE;
   v_res   reserva.id_reserva%TYPE;
 BEGIN
-  -- Una reserva confirmada que ya existe
   SELECT l.id_habitacion, l.id_alojamiento, l.fecha_checkin, l.fecha_checkout
   INTO   v_hab, v_aloj, v_in, v_out
   FROM   reserva_habitacion l JOIN reserva r ON r.id_reserva = l.id_reserva
@@ -167,11 +178,9 @@ BEGIN
   FETCH FIRST 1 ROW ONLY;
   DBMS_OUTPUT.PUT_LINE('Habitación ' || v_hab || ' ocupada del ' || TO_CHAR(v_in, 'DD/MM/YYYY') ||
                        ' al ' || TO_CHAR(v_out, 'DD/MM/YYYY') || '. Intento reservarla encima:');
-
   INSERT INTO reserva (id_cliente, id_alojamiento, fecha_reserva, fecha_checkin, fecha_checkout, estado)
   VALUES (3, v_aloj, SYSDATE, v_in, v_out, 'CONFIRMADA')
   RETURNING id_reserva INTO v_res;
-
   INSERT INTO reserva_habitacion (id_reserva, id_alojamiento, id_habitacion,
                                   fecha_checkin, fecha_checkout, num_huespedes, valor_estadia)
   VALUES (v_res, v_aloj, v_hab, v_in, v_out, 1, 100000);
@@ -179,9 +188,22 @@ END;
 /
 ROLLBACK;
 
--- 4.4 Auditoría de TARIFA: se sube una tarifa y queda registrado quién,
--- cuándo, el valor anterior y el nuevo
+-- 4.3 Auditoría de TARIFA: UPDATE, DELETE e INSERT
 UPDATE tarifa SET valor_noche = valor_noche + 5000 WHERE id_tarifa = 1;
+
+DECLARE
+  v_hab  tarifa.id_habitacion%TYPE;
+  v_tem  tarifa.id_temporada%TYPE;
+  v_val  tarifa.valor_noche%TYPE;
+BEGIN
+  SELECT id_habitacion, id_temporada, valor_noche
+  INTO   v_hab, v_tem, v_val
+  FROM   tarifa WHERE id_tarifa = 2;
+  DELETE FROM tarifa WHERE id_tarifa = 2;
+  INSERT INTO tarifa (id_habitacion, id_temporada, valor_noche)
+  VALUES (v_hab, v_tem, v_val + 10000);
+END;
+/
 
 SELECT operacion, id_tarifa, valor_anterior, valor_nuevo, usuario_bd, usuario_so, equipo,
        TO_CHAR(fecha_cambio, 'DD/MM/YYYY HH24:MI:SS') AS fecha_cambio, filas_en_sentencia
@@ -193,16 +215,15 @@ ROLLBACK;
 
 
 -- =====================================================================
--- PARTE 5. TRANSACCIONES, ÍNDICES Y SEGURIDAD (3 min)
+-- 5. TRANSACCIONES, ÍNDICES Y SEGURIDAD (Juan)
 -- =====================================================================
 -- 5.1 Rollback parcial con SAVEPOINT
--- Paso 1: la reserva (cabecera y línea), sin pago
+-- Paso 1: la reserva sin pago
 DECLARE
   v_hab   habitacion.id_habitacion%TYPE;
   v_aloj  habitacion.id_alojamiento%TYPE;
   v_res   reserva.id_reserva%TYPE;
 BEGIN
-  -- Primera habitación libre del 26 al 28 de diciembre de 2026
   SELECT MIN(h.id_habitacion) INTO v_hab
   FROM   habitacion h
   WHERE  h.capacidad >= 2
@@ -211,7 +232,6 @@ BEGIN
                   AND    r.estado IN ('CONFIRMADA', 'COMPLETADA')
                   AND    l.fecha_checkin < DATE '2026-12-28' AND l.fecha_checkout > DATE '2026-12-26');
   SELECT id_alojamiento INTO v_aloj FROM habitacion WHERE id_habitacion = v_hab;
-
   INSERT INTO reserva (id_cliente, id_alojamiento, fecha_reserva, fecha_checkin, fecha_checkout, estado)
   VALUES (7, v_aloj, SYSDATE, DATE '2026-12-26', DATE '2026-12-28', 'PENDIENTE')
   RETURNING id_reserva INTO v_res;
@@ -242,10 +262,9 @@ SELECT r.id_reserva, r.estado, p.id_pago, p.monto
 FROM   reserva r LEFT JOIN pago p ON p.id_reserva = r.id_reserva
 WHERE  r.id_cliente = 7 AND r.fecha_reserva >= TRUNC(SYSDATE);
 
--- (Para no dejar datos de la demostración se deshace todo)
 ROLLBACK;
 
--- 5.2 Índice con su plan antes y después: historial de un cliente
+-- 5.2 Índice con su plan antes y después
 DROP INDEX idx_reserva_cliente_fecha;
 
 EXPLAIN PLAN SET STATEMENT_ID = 'VIDEO_ANTES' FOR
@@ -260,7 +279,7 @@ SELECT id_reserva, fecha_checkin, estado FROM reserva
 WHERE  id_cliente = 1234 ORDER BY fecha_checkin DESC;
 SELECT plan_table_output FROM TABLE(DBMS_XPLAN.DISPLAY('PLAN_TABLE', 'VIDEO_DESPUES', 'BASIC +COST +ROWS'));
 
--- Mediciones completas del script 10 (costo y milisegundos)
+-- Mediciones de las tres consultas (script 10)
 SELECT a.consulta, a.costo AS costo_antes, d.costo AS costo_despues,
        a.tiempo_ms AS ms_antes, d.tiempo_ms AS ms_despues
 FROM   indice_medicion a
@@ -268,7 +287,7 @@ JOIN   indice_medicion d ON d.consulta = a.consulta AND d.momento = 'DESPUES'
 WHERE  a.momento = 'ANTES'
 ORDER BY a.consulta;
 
--- 5.3 Caso donde el índice NO ayuda: reservas COMPLETADAS (la mayoría)
+-- 5.3 El índice que no ayuda
 SELECT estado, COUNT(*) AS reservas,
        ROUND(100 * RATIO_TO_REPORT(COUNT(*)) OVER (), 1) AS porcentaje
 FROM   reserva GROUP BY estado ORDER BY reservas DESC;
@@ -279,13 +298,16 @@ EXPLAIN PLAN SET STATEMENT_ID = 'VIDEO_ESTADO' FOR
 SELECT id_reserva, fecha_checkin FROM reserva WHERE estado = 'COMPLETADA';
 SELECT plan_table_output FROM TABLE(DBMS_XPLAN.DISPLAY('PLAN_TABLE', 'VIDEO_ESTADO', 'BASIC +COST +ROWS'));
 
+EXPLAIN PLAN SET STATEMENT_ID = 'VIDEO_FORZADO' FOR
+SELECT /*+ INDEX(r idx_reserva_estado) */ id_reserva, fecha_checkin
+FROM   reserva r WHERE estado = 'COMPLETADA';
+SELECT plan_table_output FROM TABLE(DBMS_XPLAN.DISPLAY('PLAN_TABLE', 'VIDEO_FORZADO', 'BASIC +COST +ROWS'));
+
 DROP INDEX idx_reserva_estado;
 
--- 5.4 Seguridad: el usuario de recepción intenta leer la tabla directamente
--- (este bloque cambia la conexión de la hoja; va de último)
+-- 5.4 Recepción intenta leer una tabla -> ORA-00942 (va de último)
 CONNECT u_recepcion/Recepcion2026@localhost:1521/XEPDB1
 
 SELECT COUNT(*) FROM turismouq.reserva;
 
--- Por la vista sí puede
 SELECT * FROM turismouq.v_rec_habitaciones WHERE municipio = 'Salento' FETCH FIRST 5 ROWS ONLY;
